@@ -1,0 +1,5 @@
+pysrt
+chardet
+moviepy
+sumy
+nltk
