@@ -6,8 +6,8 @@ import pysrt
 import chardet
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 
-srt_filename = "plus-minus.srt"
-video_file = "plus-minus.mp4"
+srt_filename = "./subtitles/plus-minus.srt"
+video_file = "./videos/plus-minus.mp4"
 
 OLLAMA_SERVER_URL = "http://omni.us-east-1.staging.shaadi.internal:11434/api/generate"
 
@@ -90,7 +90,7 @@ def generate_summary(filename=video_file, subtitles=srt_filename, duration=120, 
     ]
     
     summary_clip = create_video_summary(filename, summary_segments)
-    output_file = f"{os.path.splitext(filename)[0]}_summary.mp4"
+    output_file = f"./summary/{os.path.splitext(filename)[0]}_summary.mp4"
     summary_clip.to_videofile(output_file, codec="libx264", temp_audiofile="temp.m4a", remove_temp=True, audio_codec="aac")
     return True
 
