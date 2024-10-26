@@ -13,7 +13,7 @@ def get_ollama_summary(prompt):
     url = "http://omni.us-east-1.staging.shaadi.internal:11434/api/generate"
     headers = {"Content-Type": "application/json"}
     payload = {
-        "model": "tinyllama:latest",
+        "model": "llama3.2:3b",
         "prompt": prompt
     }
 

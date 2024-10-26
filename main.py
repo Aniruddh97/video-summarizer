@@ -1,30 +1,29 @@
 from __future__ import unicode_literals
 import os
 import re
+import requests
 import pysrt
 import chardet
 from moviepy.editor import VideoFileClip, concatenate_videoclips
-from sumy.parsers.plaintext import PlaintextParser
-from sumy.nlp.tokenizers import Tokenizer
-from sumy.nlp.stemmers import Stemmer
-from sumy.utils import get_stop_words
-from sumy.summarizers.kl import KLSummarizer
 
-import nltk
-nltk.download('punkt_tab')
+srt_filename = "plus-minus.srt"
+video_file = "plus-minus.mp4"
 
-srt_filename = "video.srt"
-video_file = "video.mp4"
+OLLAMA_SERVER_URL = "http://omni.us-east-1.staging.shaadi.internal:11434/api/generate"
+
+def call_ollama_server(prompt, model="llama3.2:3b"):
+    """Send a prompt to the Ollama server and return the response."""
+    response = requests.post(OLLAMA_SERVER_URL, json={"model": model, "prompt": prompt, "stream": False})
+    print(response)
+    response.raise_for_status()  # Raise an error for bad status codes
+    return response.json().get("response", "").strip()
 
 def srt_to_text(srt_file):
     """Convert SRT file content to plain text."""
     text = ''
     for index, item in enumerate(srt_file):
         if not item.text.startswith("["):
-            text += "(%d) " % index
-            text += item.text.replace("\n", "").strip("...").replace(
-                                     ".", "").replace("?", "").replace("!", "")
-            text += ". "
+            text += f"({index}) " + item.text.replace("\n", " ").strip("...") + ". "
     return text
 
 def srt_segment_to_range(item):
@@ -33,49 +32,67 @@ def srt_segment_to_range(item):
     end = item.end.hours * 3600 + item.end.minutes * 60 + item.end.seconds + item.end.milliseconds / 1000
     return start, end
 
-def summarize_srt(srt_file, n_sentences, language="english"):
-    """Summarize SRT file content into n sentences."""
-    parser = PlaintextParser.from_string(srt_to_text(srt_file), Tokenizer(language))
-    summarizer = KLSummarizer(Stemmer(language))
-    summarizer.stop_words = get_stop_words(language)
-    
-    summary = []
-    for sentence in summarizer(parser.document, n_sentences):
-        index = int(re.search(r"\((\d+)\)", str(sentence)).group(1))
-        summary.append(srt_segment_to_range(srt_file[index]))
-    return summary
+def filter_srt_for_demographic_llm(srt_file, demographic_keywords):
+    """Use LLM to filter SRT file content for relevance to the demographic."""
+    filtered_segments = []
+    for item in srt_file:
+        prompt = (
+            f"Given the following demographic keywords: {', '.join(demographic_keywords)}, identify if the "
+            f"following text is relevant to the demographic. Respond with 'yes' or 'no'.\n\n"
+            f"Text: {item.text}\n\n"
+            "Response: <yes/no>"
+        )
+        response_text = call_ollama_server(prompt)
+        if response_text.lower() == "yes":
+            filtered_segments.append(item)
+    return filtered_segments
+
+def summarize_srt_llm(filtered_text, duration):
+    """Use LLM to summarize filtered SRT text into a concise format."""
+    prompt = (
+        f"Summarize the following text to create a video summary that will fit into {duration} seconds. "
+        "Provide the response in the format of indexed sentences for easy reference. "
+        "Each sentence should be in the format (index) text. Only include the text for the summary.\n\n"
+        f"Text: {filtered_text}\n\n"
+        "Response: <summary>"
+    )
+    return call_ollama_server(prompt)
 
 def calculate_duration(segments):
     """Calculate total duration for given segments."""
     return sum(end - start for start, end in segments)
 
-def find_summary_regions(srt_filename, duration=30, language="english"):
-    """Identify summary regions within SRT file to match desired duration."""
-    enc = chardet.detect(open(srt_filename, "rb").read())['encoding']
-    srt_file = pysrt.open(srt_filename, encoding=enc)
-    
-    avg_duration = calculate_duration(map(srt_segment_to_range, srt_file)) / len(srt_file)
-    n_sentences = int(duration / avg_duration)
-    
-    summary = summarize_srt(srt_file, n_sentences, language)
-    while (total_duration := calculate_duration(summary)) < duration:
-        n_sentences += 1
-        summary = summarize_srt(srt_file, n_sentences, language)
-    
-    return summary
-
-def create_video_summary(filename, regions):
+def create_video_summary(filename, segments):
     """Create a summarized video by concatenating specified segments."""
     input_video = VideoFileClip(filename)
-    subclips = [input_video.subclip(start, end) for start, end in regions]
+    subclips = [input_video.subclip(start, end) for start, end in segments]
     return concatenate_videoclips(subclips)
 
-def generate_summary(filename=video_file, subtitles=srt_filename, duration=120):
-    """Generate the video summary."""
-    regions = find_summary_regions(subtitles, duration)
-    summary_clip = create_video_summary(filename, regions)
+def generate_summary(filename=video_file, subtitles=srt_filename, duration=120, demographic_keywords=None):
+    """Generate the video summary specific to a demographic using LLM for filtering and summarization."""
+    enc = chardet.detect(open(subtitles, "rb").read())['encoding']
+    srt_file = pysrt.open(subtitles, encoding=enc)
+    
+    if demographic_keywords:
+        srt_file = filter_srt_for_demographic_llm(srt_file, demographic_keywords)
+    
+    if not srt_file:
+        raise ValueError("No relevant segments found for the specified demographic keywords.")
+    
+    # Prepare text for summarization with LLM
+    filtered_text = srt_to_text(srt_file)
+    summary_text = summarize_srt_llm(filtered_text, duration)
+    
+    # Convert summary text to timestamp segments
+    summary_segments = [
+        srt_segment_to_range(srt_file[int(match.group(1))])
+        for match in re.finditer(r"\((\d+)\)", summary_text)
+    ]
+    
+    summary_clip = create_video_summary(filename, summary_segments)
     output_file = f"{os.path.splitext(filename)[0]}_summary.mp4"
     summary_clip.to_videofile(output_file, codec="libx264", temp_audiofile="temp.m4a", remove_temp=True, audio_codec="aac")
     return True
 
-generate_summary()
+# Example usage with demographic keywords
+generate_summary(demographic_keywords=["cheerful", "youth"])
