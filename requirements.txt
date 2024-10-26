@@ -3,3 +3,4 @@ chardet
 moviepy
 sumy
 nltk
+pydub
