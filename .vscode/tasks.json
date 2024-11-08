@@ -1,0 +1,32 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "docker-build",
+            "label": "docker-build",
+            "platform": "python",
+            "dockerBuild": {
+                "tag": "videomash:latest",
+                "dockerfile": "${workspaceFolder}/Dockerfile",
+                "context": "${workspaceFolder}",
+                "pull": true
+            }
+        },
+        {
+            "type": "docker-run",
+            "label": "docker-run: debug",
+            "dependsOn": ["docker-build"],
+            "dockerRun": {
+                "volumes": [
+                    {
+                        "localPath": "${workspaceFolder}",
+                        "containerPath": "/app"
+                    }
+                ]
+            },
+            "python": {
+                "file": "main.py"
+            }
+        }
+    ]
+}
